@@ -2,21 +2,20 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps for audio processing
 RUN apt-get update && apt-get install -y \
     gcc \
     libsndfile1 \
     espeak-ng \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Download Kokoro model on build so it is ready at runtime
+# Download Kokoro model at build time so first call is instant
 RUN python -c "from kokoro import KPipeline; KPipeline(lang_code='a')"
 
-COPY . .
-COPY ../frontend /frontend
+COPY backend/ .
+COPY frontend/ /frontend
 
 EXPOSE 8000
 
