@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VoiceAgent — AI Cold Calling</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 min-h-screen text-white">
+    <nav class="bg-gray-800 border-b border-gray-700 px-6 py-4">
+        <h1 class="text-xl font-bold text-indigo-400">🎙️ VoiceAgent</h1>
+    </nav>
+
+    <main class="max-w-3xl mx-auto px-6 py-12">
+        <!-- Hero -->
+        <div class="text-center mb-12">
+            <h2 class="text-4xl font-bold text-white mb-4">AI Cold Calling Agent</h2>
+            <p class="text-gray-400 text-lg mb-8">Talk to Alex — an AI sales rep that handles objections naturally. Hold the button to speak.</p>
+            <a href="/call.html"
+                class="inline-block px-8 py-4 bg-indigo-600 hover:bg-indigo-700 text-white text-lg font-semibold rounded-2xl transition shadow-lg">
+                📞 Start New Call
+            </a>
+        </div>
+
+        <!-- Call History -->
+        <div class="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-700">
+                <h3 class="text-lg font-semibold text-white">Your Call History</h3>
+                <p class="text-gray-500 text-sm mt-1">Calls from this browser are saved automatically</p>
+            </div>
+            <div id="callList">
+                <div class="px-6 py-8 text-center text-gray-500">Loading...</div>
+            </div>
+        </div>
+    </main>
+
+    <script type="module">
+        import { getCallerId } from "/js/identity.js"
+        import { getCalls } from "/js/api.js"
+
+        const callerId = getCallerId()
+        const listEl = document.getElementById("callList")
+
+        const outcomeLabel = {
+            "scheduled_demo": { text: "Demo Scheduled", cls: "bg-green-900 text-green-300" },
+            "callback_requested": { text: "Callback Requested", cls: "bg-blue-900 text-blue-300" },
+            "not_interested": { text: "Not Interested", cls: "bg-red-900 text-red-300" },
+            "hung_up": { text: "Hung Up", cls: "bg-gray-700 text-gray-300" }
+        }
+
+        try {
+            const res = await getCalls(callerId)
+            const calls = res.data.calls
+
+            if (calls.length === 0) {
+                listEl.innerHTML = `<div class="px-6 py-8 text-center text-gray-500">No calls yet — start your first call above.</div>`
+            } else {
+                listEl.innerHTML = calls.map(c => {
+                    const date = new Date(c.startTime).toLocaleString()
+                    const duration = c.durationSeconds
+                        ? `${Math.floor(c.durationSeconds / 60)}m ${c.durationSeconds % 60}s`
+                        : "—"
+                    const outcome = outcomeLabel[c.outcome] || { text: "Completed", cls: "bg-gray-700 text-gray-300" }
+                    return `
+                        <div class="px-6 py-4 border-b border-gray-700 flex items-center justify-between hover:bg-gray-750 transition">
+                            <div>
+                                <p class="text-white font-medium">${date}</p>
+                                <p class="text-gray-400 text-sm">Duration: ${duration} · Objections handled: ${c.objectionCount || 0}</p>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <span class="px-3 py-1 rounded-full text-xs font-medium ${outcome.cls}">${outcome.text}</span>
+                                <a href="/transcript.html?id=${c._id}"
+                                    class="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs rounded-lg transition">
+                                    View
+                                </a>
+                            </div>
+                        </div>`
+                }).join("")
+            }
+        } catch (err) {
+            listEl.innerHTML = `<div class="px-6 py-8 text-center text-red-400">${err.message}</div>`
+        }
+    </script>
+</body>
+</html>

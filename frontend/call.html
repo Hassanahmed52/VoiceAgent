@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>On Call — VoiceAgent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 min-h-screen text-white flex flex-col">
+    <nav class="bg-gray-800 border-b border-gray-700 px-6 py-4 flex justify-between items-center">
+        <h1 class="text-xl font-bold text-indigo-400">🎙️ VoiceAgent</h1>
+        <button id="endBtn"
+            class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-lg transition">
+            End Call
+        </button>
+    </nav>
+
+    <main class="flex-1 max-w-2xl mx-auto w-full px-6 py-8 flex flex-col gap-6">
+        <!-- Status + waveform -->
+        <div class="bg-gray-800 rounded-2xl border border-gray-700 p-6 flex flex-col items-center gap-4">
+            <div class="flex gap-1 items-end h-10" id="wave">
+                <div class="w-1 bg-indigo-500 rounded-full h-3"></div>
+                <div class="w-1 bg-indigo-500 rounded-full h-6"></div>
+                <div class="w-1 bg-indigo-500 rounded-full h-10"></div>
+                <div class="w-1 bg-indigo-500 rounded-full h-6"></div>
+                <div class="w-1 bg-indigo-500 rounded-full h-3"></div>
+                <div class="w-1 bg-indigo-500 rounded-full h-8"></div>
+                <div class="w-1 bg-indigo-500 rounded-full h-4"></div>
+                <div class="w-1 bg-indigo-500 rounded-full h-10"></div>
+                <div class="w-1 bg-indigo-500 rounded-full h-5"></div>
+                <div class="w-1 bg-indigo-500 rounded-full h-3"></div>
+            </div>
+            <p id="status" class="text-sm font-medium text-yellow-400">Connecting...</p>
+        </div>
+
+        <!-- Transcript -->
+        <div class="bg-gray-800 rounded-2xl border border-gray-700 flex-1 overflow-hidden flex flex-col">
+            <div class="px-4 py-3 border-b border-gray-700">
+                <p class="text-sm text-gray-400 font-medium">Live Transcript</p>
+            </div>
+            <div id="transcript" class="flex-1 overflow-y-auto p-4 flex flex-col gap-3 min-h-64"></div>
+        </div>
+
+        <!-- Talk button -->
+        <div class="flex flex-col items-center gap-2">
+            <button id="talkBtn"
+                class="w-24 h-24 rounded-full bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-sm font-semibold shadow-lg transition select-none touch-none border-4 border-indigo-400">
+                Hold to Talk
+            </button>
+            <p class="text-gray-500 text-xs">Hold the button while speaking, release to send</p>
+        </div>
+    </main>
+
+    <script type="module" src="/js/call.js"></script>
+</body>
+</html>

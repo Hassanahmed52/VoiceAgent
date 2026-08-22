@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Call Transcript — VoiceAgent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 min-h-screen text-white">
+    <nav class="bg-gray-800 border-b border-gray-700 px-6 py-4 flex items-center gap-4">
+        <a href="/" class="text-gray-400 hover:text-white transition text-sm">← Back</a>
+        <h1 class="text-xl font-bold text-indigo-400">🎙️ VoiceAgent</h1>
+    </nav>
+
+    <main class="max-w-2xl mx-auto px-6 py-8">
+        <div id="content">
+            <div class="text-center text-gray-400 py-12">Loading transcript...</div>
+        </div>
+    </main>
+
+    <script type="module">
+        import { getCall } from "/js/api.js"
+
+        const params = new URLSearchParams(window.location.search)
+        const callId = params.get("id")
+        if (!callId) window.location.href = "/"
+
+        const outcomeLabel = {
+            "scheduled_demo": { text: "Demo Scheduled", cls: "bg-green-900 text-green-300" },
+            "callback_requested": { text: "Callback Requested", cls: "bg-blue-900 text-blue-300" },
+            "not_interested": { text: "Not Interested", cls: "bg-red-900 text-red-300" },
+            "hung_up": { text: "Hung Up", cls: "bg-gray-700 text-gray-300" }
+        }
+
+        try {
+            const res = await getCall(callId)
+            const c = res.data.call
+            const outcome = outcomeLabel[c.outcome] || { text: "Completed", cls: "bg-gray-700 text-gray-300" }
+            const duration = c.durationSeconds
+                ? `${Math.floor(c.durationSeconds / 60)}m ${c.durationSeconds % 60}s`
+                : "—"
+
+            document.getElementById("content").innerHTML = `
+                <div class="bg-gray-800 rounded-2xl border border-gray-700 p-6 mb-6">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <p class="text-gray-400 text-sm">${new Date(c.startTime).toLocaleString()}</p>
+                            <p class="text-gray-300 text-sm mt-1">Duration: ${duration} · Objections: ${c.objectionCount || 0}</p>
+                        </div>
+                        <span class="px-3 py-1 rounded-full text-xs font-medium ${outcome.cls}">${outcome.text}</span>
+                    </div>
+                </div>
+                <div class="flex flex-col gap-3">
+                    ${(c.transcript || []).map(t => `
+                        <div class="flex gap-3 items-start ${t.role === 'user' ? 'flex-row-reverse' : ''}">
+                            <span class="text-xs text-gray-500 mt-2 shrink-0">${t.role === 'agent' ? 'Alex' : 'You'}</span>
+                            <div class="${t.role === 'agent'
+                                ? 'bg-gray-700 text-white'
+                                : 'bg-indigo-600 text-white'} px-4 py-2 rounded-2xl ${t.role === 'agent' ? 'rounded-tl-none' : 'rounded-tr-none'} max-w-sm text-sm leading-relaxed">
+                                ${t.text}
+                            </div>
+                        </div>
+                    `).join("")}
+                </div>`
+        } catch (err) {
+            document.getElementById("content").innerHTML =
+                `<div class="text-center text-red-400 py-12">${err.message}</div>`
+        }
+    </script>
+</body>
+</html>
