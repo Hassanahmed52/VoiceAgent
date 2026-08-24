@@ -21,7 +21,7 @@ from speech import text_to_speech, speech_to_text
 # just one exchange even when nothing conclusive happened. We only honor an
 # outcome once the prospect has actually spoken this many times — except
 # "hung_up", which can legitimately happen on turn one if they just say bye.
-MIN_USER_TURNS_BEFORE_END = 2
+MIN_USER_TURNS_BEFORE_END = 3
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
