@@ -51,7 +51,7 @@ Return visit → callerId read from localStorage → history fetched from MongoD
 ## What's Built
 
 - WebSocket call pipeline: mic capture → STT → LLM → TTS → audio playback
-- Hold-to-talk interface with live transcript
+- Automatic voice activity detection (VAD) — no button-holding, Alex knows when you stop talking
 - Objection handling: not interested, too busy, already have solution, send email, wrong person
 - Call outcome classification: scheduled_demo, callback_requested, not_interested, hung_up
 - Full call history per browser (no login needed, UUID-based)
@@ -61,7 +61,6 @@ Return visit → callerId read from localStorage → history fetched from MongoD
 
 ## What's Not Built
 
-- Wake word detection (always hold-to-talk, not hands-free)
 - Interruption handling (user talking while agent speaks)
 - Multiple language support
 - Email or SMS follow-up after call
@@ -87,6 +86,7 @@ This project went through a lot of real debugging, not just first-pass code. Rou
 15. **Scheduling friction misread as rejection** — "I'm busy Thursday, try another time" was being counted as an objection and eventually flipped the outcome to `not_interested`, even though the user was still actively trying to book. Split "reschedule" language from "rejection" language and added a matching hard gate (`user_rejected_offer()`).
 16. **Profanity-laden rejections slipping through the gate** — blunt blow-offs ("fuck off", "you're a loser, end the call") weren't matching the rejection phrase list, so the call kept going for several more turns after a clearly hostile rejection. Expanded the rejection phrase list to catch this language directly.
 17. **Confirmed rejections still forced through the minimum-turns guard** — an unambiguous "I'm not interested, end the call" on an early turn was still being blocked by the turn-count safety net meant for premature/ambiguous outcomes. Reordered the logic so explicit content checks run first, and a confirmed rejection is exempted from the turn minimum.
+18. **Frontend changes not showing up in a normal browser after deploy** — editing `call.v2.js` in place (rather than renaming it, like the earlier CDN-cache fix) meant browsers with an existing cached copy kept serving stale JS, even though incognito always showed the latest version. FastAPI's default `StaticFiles` sends no `Cache-Control` header, so browsers fall back to their own heuristic caching. Fixed permanently with a custom `NoCacheStaticFiles` class that forces `Cache-Control: no-cache, must-revalidate` on every static file response — browsers now always check with the server before using a cached copy, instead of trusting a stale one silently.
 
 The overall approach: don't trust the LLM's self-reported signals (outcome tags, "the user agreed") at face value. Every outcome that ends a call is now cross-checked against what the user *actually said*, in code, before it's honored — the model can suggest an outcome, but the code has final say.
 
@@ -103,7 +103,6 @@ The evaluator opens a link and talks to the agent. A login form before that woul
 
 ## What I Would Do Next
 
-- Voice activity detection so the call feels fully hands-free
 - Interruption handling — detect user speaking during agent audio, stop playback and listen
 - Streaming TTS — start playing audio as tokens arrive instead of waiting for full response
 - Webhook or email summary after each call

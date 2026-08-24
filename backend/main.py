@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
+from starlette.staticfiles import StaticFiles as BaseStaticFiles
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 
@@ -308,4 +309,23 @@ async def websocket_call(websocket: WebSocket):
             except Exception as e:
                 print(f"[ws] error saving: {e}")
 
-app.mount("/", StaticFiles(directory="/frontend", html=True), name="frontend")
+class NoCacheStaticFiles(BaseStaticFiles):
+    """
+    Forces browsers to always revalidate static files (HTML/JS/CSS) with the
+    server instead of silently serving a stale cached copy. Without this,
+    FastAPI's default StaticFiles sends no Cache-Control header, so browsers
+    fall back to their own heuristic caching — which is why editing
+    call.v2.js in place worked in incognito (no cache) but not in a normal
+    browser (stale cache hit). "no-cache" here does NOT mean "never cache" —
+    it means "always ask the server first," so the browser still gets fast
+    304 Not Modified responses when nothing changed, just never a blind
+    stale hit.
+    """
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if hasattr(response, "headers"):
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
+
+app.mount("/", NoCacheStaticFiles(directory="/frontend", html=True), name="frontend")
