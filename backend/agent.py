@@ -47,7 +47,7 @@ Choose whichever fits. Do not include the OUTCOME line in any message except the
 
 # Opening pitch — sent as the first agent message before user says anything.
 # Kept short because people hang up if the opener is too long.
-OPENING_PITCH = "Hi, is this a good time for a quick 30-second call? This is Alex from Likva Solutions — we help small businesses automate the repetitive stuff that eats up their week. I just had one quick question for you."
+OPENING_PITCH = "Hi, quick sec — this is Alex from Likva Solutions. We help small businesses save hours by automating repetitive work. Got 30 seconds?"
 
 client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
 
@@ -62,8 +62,9 @@ async def get_agent_response(conversation_history: list) -> str:
     response = await client.chat.completions.create(
         model="openai/gpt-oss-120b",
         messages=messages,
-        max_tokens=150,      # keep responses short — this is a phone call
-        temperature=0.85,    # slightly creative so it does not sound scripted
+        max_tokens=500,           # gpt-oss burns tokens on internal reasoning
+        temperature=0.85,         # slightly creative so it does not sound scripted
+        reasoning_effort="low",   # keep reasoning minimal — this is a quick phone reply, not a hard problem
     )
 
     return response.choices[0].message.content.strip()
