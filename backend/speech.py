@@ -1,68 +1,42 @@
 import os
 import io
-import numpy as np
-import soundfile as sf
+import asyncio
 from groq import AsyncGroq
 
-# Kokoro TTS — runs locally, no API key, unlimited free usage.
-# We lazy-load it on first use so startup is fast.
-# If kokoro fails to load (e.g. missing espeak-ng), we fall back to
-# a simple error message rather than crashing the whole server.
-
-_kokoro_pipeline = None
-
-def get_tts_pipeline():
-    global _kokoro_pipeline
-    if _kokoro_pipeline is None:
-        try:
-            from kokoro import KPipeline
-            # lang_code='a' = American English
-            _kokoro_pipeline = KPipeline(lang_code='a')
-            print("[tts] Kokoro pipeline loaded")
-        except Exception as e:
-            print(f"[tts] Kokoro failed to load: {e}")
-            _kokoro_pipeline = None
-    return _kokoro_pipeline
+# TTS: gTTS — sends text to Google, gets MP3 back, converts to WAV
+# Uses ~5MB RAM vs Kokoro's 500MB. No API key needed.
+# Tradeoff: requires internet to Google's TTS servers (always available).
 
 def text_to_speech(text: str) -> bytes:
     """
-    Converts text to audio bytes (WAV format) using Kokoro TTS.
-    Returns raw WAV bytes that the frontend plays directly.
-    If Kokoro is unavailable, returns empty bytes and logs the error.
+    Converts text to WAV audio bytes using Google TTS.
+    Returns empty bytes on failure — never crashes the call.
     """
     if not text or not text.strip():
         return b""
 
-    pipeline = get_tts_pipeline()
-    if pipeline is None:
-        print("[tts] pipeline not available, skipping audio")
-        return b""
-
     try:
-        # Kokoro returns a generator of (graphemes, phonemes, audio_array) tuples
-        # voice='af_heart' is a natural-sounding American female voice
-        audio_chunks = []
-        for _, _, audio in pipeline(text, voice='af_heart', speed=1.0):
-            if audio is not None:
-                audio_chunks.append(audio)
+        from gtts import gTTS
+        from pydub import AudioSegment
 
-        if not audio_chunks:
-            return b""
+        # Generate MP3 from Google TTS
+        tts = gTTS(text=text, lang="en", slow=False, tld="com")
+        mp3_buffer = io.BytesIO()
+        tts.write_to_fp(mp3_buffer)
+        mp3_buffer.seek(0)
 
-        # Concatenate all chunks into one audio array
-        full_audio = np.concatenate(audio_chunks)
-
-        # Write to WAV bytes buffer — 24kHz sample rate (Kokoro default)
-        buffer = io.BytesIO()
-        sf.write(buffer, full_audio, 24000, format='WAV')
-        buffer.seek(0)
-        return buffer.read()
+        # Convert MP3 to WAV so browser AudioContext can decode it
+        audio = AudioSegment.from_mp3(mp3_buffer)
+        wav_buffer = io.BytesIO()
+        audio.export(wav_buffer, format="wav")
+        wav_buffer.seek(0)
+        return wav_buffer.read()
 
     except Exception as e:
         print(f"[tts] error: {e}")
         return b""
 
-# Groq Whisper STT — same Groq account, free tier
+# STT: Groq Whisper — unchanged
 _groq_client = None
 
 def get_groq_client():
@@ -73,18 +47,14 @@ def get_groq_client():
 
 async def speech_to_text(audio_bytes: bytes, mime_type: str = "audio/webm") -> str:
     """
-    Sends audio bytes to Groq Whisper and returns transcribed text.
-    The browser sends audio/webm from MediaRecorder — Whisper handles it natively.
-    Returns empty string on failure rather than raising — a failed transcription
-    should not crash the call, the agent will ask the user to repeat.
+    Sends audio to Groq Whisper, returns transcribed text.
+    Returns empty string on failure so the call continues.
     """
-    if not audio_bytes:
+    if not audio_bytes or len(audio_bytes) < 1000:
         return ""
 
     try:
         client = get_groq_client()
-
-        # Groq expects a file-like object with a name so it knows the format
         audio_file = ("audio.webm", io.BytesIO(audio_bytes), mime_type)
 
         transcription = await client.audio.transcriptions.create(
