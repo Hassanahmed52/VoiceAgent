@@ -130,7 +130,14 @@ RESCHEDULE_SIGNAL_PHRASES = [
 REJECTION_PHRASES = [
     "not interested", "no thanks", "don't want", "dont want",
     "stop calling", "leave me alone", "don't call", "dont call",
-    "go away", "not now", "no thank you", "remove me", "unsubscribe"
+    "go away", "not now", "no thank you", "remove me", "unsubscribe",
+    # Hostile / profane blow-offs — in practice, cursing at a cold-call
+    # agent is an unambiguous rejection, not scheduling friction. These
+    # were previously falling through the gate entirely, which forced
+    # the call to keep going through repeated insults before ending.
+    "fuck off", "fucking off", "f off", "screw you", "piss off",
+    "get lost", "shut up", "go to hell", "loser", "asshole",
+    "cancel the call", "end this call"
 ]
 
 def user_rejected_offer(last_user_text: str) -> bool:

@@ -214,24 +214,31 @@ async def websocket_call(websocket: WebSocket):
                 if outcome:
                     user_turns = sum(1 for m in conversation_history if m["role"] == "user")
 
-                    if outcome != "hung_up" and user_turns < MIN_USER_TURNS_BEFORE_END:
-                        # The model jumped the gun. Ignore the tag and keep the call going.
-                        print(f"[ws] ignoring premature outcome '{outcome}' after {user_turns} user turn(s)")
-                        outcome = None
-                    elif outcome == "scheduled_demo" and not user_confirmed_demo(user_text):
-                        # The model tagged scheduled_demo but the prospect's actual
-                        # last message doesn't contain real agreement language.
-                        # This catches the model hallucinating the user's "yes"
-                        # inside its own turn.
+                    # --- Step 1: content gates. Does the user's own last message
+                    # actually support this outcome? Catches the model
+                    # hallucinating agreement/rejection that was never said.
+                    if outcome == "scheduled_demo" and not user_confirmed_demo(user_text):
                         print(f"[ws] ignoring scheduled_demo — user's last message has no confirmation: '{user_text}'")
                         outcome = None
                     elif outcome == "not_interested" and not user_rejected_offer(user_text):
-                        # The model tagged not_interested but the user's last message
-                        # reads as scheduling friction ("I'm busy then"), not an
-                        # actual rejection of the offer. Keep the call going.
                         print(f"[ws] ignoring not_interested — user's last message reads as reschedule, not rejection: '{user_text}'")
                         outcome = None
-                    else:
+
+                    # --- Step 2: minimum-turns guard. Stops the model from
+                    # closing the call absurdly early on flimsy grounds.
+                    # Exempted for hung_up (a real goodbye can happen on turn
+                    # one) and for not_interested when the user's own words
+                    # already passed the explicit-rejection check above —
+                    # forcing someone who clearly said "not interested, end
+                    # the call" through more turns just to hit a quota isn't
+                    # careful, it's just annoying.
+                    if outcome and outcome not in ("hung_up",) and user_turns < MIN_USER_TURNS_BEFORE_END:
+                        is_confirmed_rejection = outcome == "not_interested" and user_rejected_offer(user_text)
+                        if not is_confirmed_rejection:
+                            print(f"[ws] ignoring premature outcome '{outcome}' after {user_turns} user turn(s)")
+                            outcome = None
+
+                    if outcome:
                         objection_count = count_objections(conversation_history)
                         await db.calls.update_one(
                             {"_id": call_object_id},
