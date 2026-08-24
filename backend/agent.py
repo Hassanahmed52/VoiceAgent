@@ -60,7 +60,7 @@ async def get_agent_response(conversation_history: list) -> str:
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + conversation_history
 
     response = await client.chat.completions.create(
-        model="llama3-70b-8192",
+        model="openai/gpt-oss-120b",
         messages=messages,
         max_tokens=150,      # keep responses short — this is a phone call
         temperature=0.85,    # slightly creative so it does not sound scripted
