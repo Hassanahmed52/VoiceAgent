@@ -16,6 +16,13 @@ from db import connect_db, close_db, get_db
 from agent import get_agent_response, extract_outcome, count_objections, OPENING_PITCH
 from speech import text_to_speech, speech_to_text
 
+# Guard against the LLM ending the call too early. gpt-oss models tend to be
+# "eager" about resolving open loops and will sometimes tag an OUTCOME after
+# just one exchange even when nothing conclusive happened. We only honor an
+# outcome once the prospect has actually spoken this many times — except
+# "hung_up", which can legitimately happen on turn one if they just say bye.
+MIN_USER_TURNS_BEFORE_END = 2
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await connect_db()
@@ -205,17 +212,24 @@ async def websocket_call(websocket: WebSocket):
                 conversation_history.append({"role": "assistant", "content": agent_text})
 
                 if outcome:
-                    objection_count = count_objections(conversation_history)
-                    await db.calls.update_one(
-                        {"_id": call_object_id},
-                        {"$set": {"outcome": outcome, "objectionCount": objection_count}}
-                    )
-                    await websocket.send_text(json.dumps({
-                        "type": "call_ended",
-                        "outcome": outcome,
-                        "callId": call_id
-                    }))
-                    break
+                    user_turns = sum(1 for m in conversation_history if m["role"] == "user")
+
+                    if outcome != "hung_up" and user_turns < MIN_USER_TURNS_BEFORE_END:
+                        # The model jumped the gun. Ignore the tag and keep the call going.
+                        print(f"[ws] ignoring premature outcome '{outcome}' after {user_turns} user turn(s)")
+                        outcome = None
+                    else:
+                        objection_count = count_objections(conversation_history)
+                        await db.calls.update_one(
+                            {"_id": call_object_id},
+                            {"$set": {"outcome": outcome, "objectionCount": objection_count}}
+                        )
+                        await websocket.send_text(json.dumps({
+                            "type": "call_ended",
+                            "outcome": outcome,
+                            "callId": call_id
+                        }))
+                        break
 
                 await websocket.send_text(json.dumps({"type": "status", "status": "listening"}))
 

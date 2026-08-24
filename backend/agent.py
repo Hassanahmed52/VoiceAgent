@@ -47,7 +47,7 @@ Choose whichever fits. Do not include the OUTCOME line in any message except the
 
 # Opening pitch — sent as the first agent message before user says anything.
 # Kept short because people hang up if the opener is too long.
-OPENING_PITCH = "Hi, quick sec — this is Alex from Likva Solutions. We help small businesses save hours by automating repetitive work. Got 30 seconds?"
+OPENING_PITCH = "Hi, this is Alex with Likva Solutions — got 30 seconds? We help teams cut hours of manual admin work every week."
 
 client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
 
