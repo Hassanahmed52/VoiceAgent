@@ -106,3 +106,28 @@ def count_objections(history: list) -> int:
             if any(phrase in text_lower for phrase in objection_phrases):
                 count += 1
     return count
+
+
+# Confirmation words the PROSPECT must actually say before we trust a
+# "scheduled_demo" outcome. The LLM has repeatedly hallucinated the user's
+# agreement inside its own turn (proposing a time and then writing the
+# user's "yes" itself), so this is a hard, code-level check — not just a
+# prompt instruction — on the user's real last message.
+CONFIRMATION_PHRASES = [
+    "yes", "yeah", "yep", "sure", "sounds good", "works for me",
+    "that works", "okay", "ok", "let's do it", "lets do it",
+    "perfect", "great", "works great", "i'm free", "im free",
+    "i am free", "that time works", "count me in", "book it",
+    "schedule it", "see you then"
+]
+
+def user_confirmed_demo(last_user_text: str) -> bool:
+    """
+    Returns True only if the prospect's own last message contains real
+    agreement language. Used as a hard gate before honoring a
+    'scheduled_demo' outcome tag from the model.
+    """
+    if not last_user_text:
+        return False
+    text_lower = last_user_text.lower()
+    return any(phrase in text_lower for phrase in CONFIRMATION_PHRASES)

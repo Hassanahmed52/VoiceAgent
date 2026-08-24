@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from db import connect_db, close_db, get_db
-from agent import get_agent_response, extract_outcome, count_objections, OPENING_PITCH
+from agent import get_agent_response, extract_outcome, count_objections, user_confirmed_demo, OPENING_PITCH
 from speech import text_to_speech, speech_to_text
 
 # Guard against the LLM ending the call too early. gpt-oss models tend to be
@@ -217,6 +217,13 @@ async def websocket_call(websocket: WebSocket):
                     if outcome != "hung_up" and user_turns < MIN_USER_TURNS_BEFORE_END:
                         # The model jumped the gun. Ignore the tag and keep the call going.
                         print(f"[ws] ignoring premature outcome '{outcome}' after {user_turns} user turn(s)")
+                        outcome = None
+                    elif outcome == "scheduled_demo" and not user_confirmed_demo(user_text):
+                        # The model tagged scheduled_demo but the prospect's actual
+                        # last message doesn't contain real agreement language.
+                        # This catches the model hallucinating the user's "yes"
+                        # inside its own turn.
+                        print(f"[ws] ignoring scheduled_demo — user's last message has no confirmation: '{user_text}'")
                         outcome = None
                     else:
                         objection_count = count_objections(conversation_history)
