@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from db import connect_db, close_db, get_db
-from agent import get_agent_response, extract_outcome, count_objections, user_confirmed_demo, OPENING_PITCH
+from agent import get_agent_response, extract_outcome, count_objections, user_confirmed_demo, user_rejected_offer, OPENING_PITCH
 from speech import text_to_speech, speech_to_text
 
 # Guard against the LLM ending the call too early. gpt-oss models tend to be
@@ -224,6 +224,12 @@ async def websocket_call(websocket: WebSocket):
                         # This catches the model hallucinating the user's "yes"
                         # inside its own turn.
                         print(f"[ws] ignoring scheduled_demo — user's last message has no confirmation: '{user_text}'")
+                        outcome = None
+                    elif outcome == "not_interested" and not user_rejected_offer(user_text):
+                        # The model tagged not_interested but the user's last message
+                        # reads as scheduling friction ("I'm busy then"), not an
+                        # actual rejection of the offer. Keep the call going.
+                        print(f"[ws] ignoring not_interested — user's last message reads as reschedule, not rejection: '{user_text}'")
                         outcome = None
                     else:
                         objection_count = count_objections(conversation_history)

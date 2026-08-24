@@ -34,6 +34,7 @@ CALL ENDING — read this carefully, this is where mistakes happen:
 - Step 2 (confirm): Only after the prospect explicitly confirms that time (says yes, sounds good, works for me, etc.) do you thank them and include OUTCOME:{"result":"scheduled_demo"}.
 - If the prospect has not yet used clear agreement words ("yes", "sure", "that works", "sounds good", "okay let's do it"), you must NOT tag scheduled_demo — keep talking instead.
 - After 3 hard rejections in a row → Close gracefully: "I appreciate your time, I will let you go. Have a great day." Then end with OUTCOME:{"result":"not_interested"}.
+- IMPORTANT: a prospect who is busy/unavailable on a specific day, or who asks for a different time, is NOT rejecting you — they are trying to schedule. Never count "I'm busy Thursday" or "give me another time" as a rejection. Only explicit statements like "not interested," "no thanks," or "stop calling" count as rejections.
 - If they hang up or say goodbye → Respond naturally and end with OUTCOME:{"result":"hung_up"}.
 - When in doubt about whether the call is actually over, assume it is NOT over. Do not include an OUTCOME line unless you are certain.
 
@@ -93,11 +94,16 @@ def count_objections(history: list) -> int:
     """
     Simple heuristic — counts user turns that contain common objection phrases.
     Stored on the call record so we can see how many objections were handled.
+
+    NOTE: bare "busy" is intentionally excluded — "I'm busy Thursday" during
+    scheduling is availability friction, not a rejection of the pitch, and
+    was previously inflating this count and pushing the model toward
+    incorrectly closing the call as not_interested.
     """
     objection_phrases = [
-        "not interested", "too busy", "no thanks", "not right now",
+        "not interested", "too busy to talk", "no thanks", "not right now",
         "already have", "send me an email", "not the right person",
-        "dont need", "don't need", "call back", "busy"
+        "dont need", "don't need", "stop calling", "not now"
     ]
     count = 0
     for msg in history:
@@ -106,6 +112,45 @@ def count_objections(history: list) -> int:
             if any(phrase in text_lower for phrase in objection_phrases):
                 count += 1
     return count
+
+
+# Phrases that indicate the prospect is trying to find a WORKING time —
+# i.e. still engaged — not rejecting the offer. Used to prevent scheduling
+# friction ("I'm busy then", "that day's booked") from being misread as
+# disinterest.
+RESCHEDULE_SIGNAL_PHRASES = [
+    "another time", "different time", "different day", "busy that",
+    "booked", "occupied", "doesn't work", "does not work", "can we do",
+    "what about", "how about", "free at", "available"
+]
+
+# Real, explicit rejection language required before we trust a
+# "not_interested" outcome tag. Hard, code-level gate — see
+# user_rejected_offer() below.
+REJECTION_PHRASES = [
+    "not interested", "no thanks", "don't want", "dont want",
+    "stop calling", "leave me alone", "don't call", "dont call",
+    "go away", "not now", "no thank you", "remove me", "unsubscribe"
+]
+
+def user_rejected_offer(last_user_text: str) -> bool:
+    """
+    Returns True only if the prospect's own last message contains real
+    rejection language AND isn't primarily a reschedule request. Used as
+    a hard gate before honoring a 'not_interested' outcome tag from the
+    model — mirrors user_confirmed_demo() below.
+    """
+    if not last_user_text:
+        return False
+    text_lower = last_user_text.lower()
+
+    has_reschedule_signal = any(p in text_lower for p in RESCHEDULE_SIGNAL_PHRASES)
+    has_rejection_signal = any(p in text_lower for p in REJECTION_PHRASES)
+
+    if has_reschedule_signal and not has_rejection_signal:
+        return False
+
+    return has_rejection_signal
 
 
 # Confirmation words the PROSPECT must actually say before we trust a
