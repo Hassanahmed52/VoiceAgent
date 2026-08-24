@@ -2,7 +2,7 @@ import os
 import json
 import base64
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -19,6 +19,10 @@ from speech import text_to_speech, speech_to_text
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await connect_db()
+    # Pre-warm TTS so first caller hears audio immediately
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, text_to_speech, OPENING_PITCH)
+    print("[startup] TTS pre-warmed")
     yield
     await close_db()
 
@@ -65,7 +69,6 @@ async def websocket_call(websocket: WebSocket):
     call_object_id = None
     conversation_history = []
     caller_id = None
-    # Use naive UTC throughout to match what MongoDB returns
     start_time = datetime.utcnow()
 
     try:
@@ -93,24 +96,20 @@ async def websocket_call(websocket: WebSocket):
 
         await websocket.send_text(json.dumps({"type": "status", "status": "speaking"}))
 
+        # This is instant now because TTS was pre-warmed at startup
         audio_bytes = await asyncio.get_event_loop().run_in_executor(
             None, text_to_speech, OPENING_PITCH
         )
 
         await websocket.send_text(json.dumps({
-            "type": "transcript",
-            "role": "agent",
-            "text": OPENING_PITCH
+            "type": "transcript", "role": "agent", "text": OPENING_PITCH
         }))
 
         if audio_bytes:
-            print(f"[ws] sending opening audio: {len(audio_bytes)} bytes")
             await websocket.send_text(json.dumps({
                 "type": "audio",
                 "data": base64.b64encode(audio_bytes).decode()
             }))
-        else:
-            print("[ws] warning: no audio for opening pitch")
 
         await db.calls.update_one(
             {"_id": call_object_id},
@@ -139,20 +138,19 @@ async def websocket_call(websocket: WebSocket):
                 print(f"[ws] received audio: {len(audio_data)} bytes")
 
                 if len(audio_data) < 500:
-                    print("[ws] audio too small, skipping")
                     await websocket.send_text(json.dumps({"type": "status", "status": "listening"}))
                     continue
 
                 user_text = await speech_to_text(audio_data)
-                print(f"[ws] STT result: '{user_text}'")
+                print(f"[ws] STT: '{user_text}'")
 
                 if not user_text or not user_text.strip():
-                    retry_msg = "Sorry, I didn't catch that. Could you try again?"
+                    retry = "Sorry, I didn't catch that. Could you say that again?"
                     await websocket.send_text(json.dumps({
-                        "type": "transcript", "role": "agent", "text": retry_msg
+                        "type": "transcript", "role": "agent", "text": retry
                     }))
                     retry_audio = await asyncio.get_event_loop().run_in_executor(
-                        None, text_to_speech, retry_msg
+                        None, text_to_speech, retry
                     )
                     if retry_audio:
                         await websocket.send_text(json.dumps({
@@ -222,7 +220,7 @@ async def websocket_call(websocket: WebSocket):
                 await websocket.send_text(json.dumps({"type": "status", "status": "listening"}))
 
     except WebSocketDisconnect:
-        print(f"[ws] client disconnected: {call_id}")
+        print(f"[ws] disconnected: {call_id}")
     except Exception as e:
         print(f"[ws] error: {e}")
         import traceback
@@ -232,7 +230,7 @@ async def websocket_call(websocket: WebSocket):
         except Exception:
             pass
     finally:
-        if call_id is not None and db is not None:
+        if call_id is not None:
             from bson import ObjectId
             end_time = datetime.utcnow()
             try:
@@ -247,10 +245,8 @@ async def websocket_call(websocket: WebSocket):
                         "objectionCount": objection_count
                     }}
                 )
-                print(f"[ws] call saved: {duration}s, objections: {objection_count}")
+                print(f"[ws] call saved: {duration}s")
             except Exception as e:
-                print(f"[ws] error saving call: {e}")
-                import traceback
-                traceback.print_exc()
+                print(f"[ws] error saving: {e}")
 
 app.mount("/", StaticFiles(directory="/frontend", html=True), name="frontend")
