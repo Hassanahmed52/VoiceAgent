@@ -24,9 +24,15 @@
 
         <!-- Call History -->
         <div class="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
-            <div class="px-6 py-4 border-b border-gray-700">
-                <h3 class="text-lg font-semibold text-white">Your Call History</h3>
-                <p class="text-gray-500 text-sm mt-1">Calls from this browser are saved automatically</p>
+            <div class="px-6 py-4 border-b border-gray-700 flex items-center justify-between">
+                <div>
+                    <h3 class="text-lg font-semibold text-white">Your Call History</h3>
+                    <p class="text-gray-500 text-sm mt-1">Calls from this browser are saved automatically</p>
+                </div>
+                <button id="clearAllBtn"
+                    class="hidden px-3 py-1.5 bg-red-900/40 hover:bg-red-900/70 text-red-300 text-xs font-medium rounded-lg transition border border-red-800">
+                    Clear All
+                </button>
             </div>
             <div id="callList">
                 <div class="px-6 py-8 text-center text-gray-500">Loading...</div>
@@ -36,10 +42,11 @@
 
     <script type="module">
         import { getCallerId } from "/js/identity.js"
-        import { getCalls } from "/js/api.js"
+        import { getCalls, deleteCall, clearCalls } from "/js/api.js"
 
         const callerId = getCallerId()
         const listEl = document.getElementById("callList")
+        const clearAllBtn = document.getElementById("clearAllBtn")
 
         const outcomeLabel = {
             "scheduled_demo": { text: "Demo Scheduled", cls: "bg-green-900 text-green-300" },
@@ -48,38 +55,85 @@
             "hung_up": { text: "Hung Up", cls: "bg-gray-700 text-gray-300" }
         }
 
-        try {
-            const res = await getCalls(callerId)
-            const calls = res.data.calls
+        const emptyState = `<div class="px-6 py-8 text-center text-gray-500">No calls yet — start your first call above.</div>`
 
+        function renderCalls(calls) {
             if (calls.length === 0) {
-                listEl.innerHTML = `<div class="px-6 py-8 text-center text-gray-500">No calls yet — start your first call above.</div>`
-            } else {
-                listEl.innerHTML = calls.map(c => {
-                    const date = new Date(c.startTime).toLocaleString()
-                    const duration = c.durationSeconds
-                        ? `${Math.floor(c.durationSeconds / 60)}m ${c.durationSeconds % 60}s`
-                        : "—"
-                    const outcome = outcomeLabel[c.outcome] || { text: "Completed", cls: "bg-gray-700 text-gray-300" }
-                    return `
-                        <div class="px-6 py-4 border-b border-gray-700 flex items-center justify-between hover:bg-gray-750 transition">
-                            <div>
-                                <p class="text-white font-medium">${date}</p>
-                                <p class="text-gray-400 text-sm">Duration: ${duration} · Objections handled: ${c.objectionCount || 0}</p>
-                            </div>
-                            <div class="flex items-center gap-3">
-                                <span class="px-3 py-1 rounded-full text-xs font-medium ${outcome.cls}">${outcome.text}</span>
-                                <a href="/transcript.html?id=${c._id}"
-                                    class="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs rounded-lg transition">
-                                    View
-                                </a>
-                            </div>
-                        </div>`
-                }).join("")
+                listEl.innerHTML = emptyState
+                clearAllBtn.classList.add("hidden")
+                return
             }
-        } catch (err) {
-            listEl.innerHTML = `<div class="px-6 py-8 text-center text-red-400">${err.message}</div>`
+
+            clearAllBtn.classList.remove("hidden")
+
+            listEl.innerHTML = calls.map(c => {
+                const date = new Date(c.startTime).toLocaleString()
+                const duration = c.durationSeconds
+                    ? `${Math.floor(c.durationSeconds / 60)}m ${c.durationSeconds % 60}s`
+                    : "—"
+                const outcome = outcomeLabel[c.outcome] || { text: "Completed", cls: "bg-gray-700 text-gray-300" }
+                return `
+                    <div class="px-6 py-4 border-b border-gray-700 flex items-center justify-between hover:bg-gray-750 transition" data-call-id="${c._id}">
+                        <div>
+                            <p class="text-white font-medium">${date}</p>
+                            <p class="text-gray-400 text-sm">Duration: ${duration} · Objections handled: ${c.objectionCount || 0}</p>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <span class="px-3 py-1 rounded-full text-xs font-medium ${outcome.cls}">${outcome.text}</span>
+                            <a href="/transcript.html?id=${c._id}"
+                                class="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs rounded-lg transition">
+                                View
+                            </a>
+                            <button class="deleteCallBtn px-2 py-1 text-gray-500 hover:text-red-400 hover:bg-red-900/30 text-sm rounded-lg transition"
+                                data-call-id="${c._id}" title="Delete this call">
+                                ✕
+                            </button>
+                        </div>
+                    </div>`
+            }).join("")
         }
+
+        async function loadCalls() {
+            try {
+                const res = await getCalls(callerId)
+                renderCalls(res.data.calls)
+            } catch (err) {
+                listEl.innerHTML = `<div class="px-6 py-8 text-center text-red-400">${err.message}</div>`
+            }
+        }
+
+        listEl.addEventListener("click", async (e) => {
+            const btn = e.target.closest(".deleteCallBtn")
+            if (!btn) return
+
+            const callId = btn.dataset.callId
+            if (!confirm("Delete this call from your history? This can't be undone.")) return
+
+            btn.disabled = true
+            try {
+                await deleteCall(callId)
+                await loadCalls()
+            } catch (err) {
+                alert(`Failed to delete call: ${err.message}`)
+                btn.disabled = false
+            }
+        })
+
+        clearAllBtn.addEventListener("click", async () => {
+            if (!confirm("Clear your entire call history? This can't be undone.")) return
+
+            clearAllBtn.disabled = true
+            try {
+                await clearCalls(callerId)
+                await loadCalls()
+            } catch (err) {
+                alert(`Failed to clear history: ${err.message}`)
+            } finally {
+                clearAllBtn.disabled = false
+            }
+        })
+
+        await loadCalls()
     </script>
 </body>
 </html>

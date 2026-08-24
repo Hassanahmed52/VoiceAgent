@@ -15,3 +15,9 @@ export const getCalls = (callerId) =>
 
 export const getCall = (callId) =>
     apiFetch(`/calls/${callId}`)
+
+export const deleteCall = (callId) =>
+    apiFetch(`/calls/${callId}`, { method: "DELETE" })
+
+export const clearCalls = (callerId) =>
+    apiFetch(`/calls?callerId=${encodeURIComponent(callerId)}`, { method: "DELETE" })
