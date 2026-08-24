@@ -37,22 +37,11 @@ CALL ENDING — read this carefully, this is where mistakes happen:
 - IMPORTANT: a prospect who is busy/unavailable on a specific day, or who asks for a different time, is NOT rejecting you — they are trying to schedule. Never count "I'm busy Thursday" or "give me another time" as a rejection. Only explicit statements like "not interested," "no thanks," or "stop calling" count as rejections.
 - If they hang up or say goodbye → Respond naturally and end with OUTCOME:{"result":"hung_up"}.
 - When in doubt about whether the call is actually over, assume it is NOT over. Do not include an OUTCOME line unless you are certain.
-
-CRITICAL — at the very end of your final message when the call is over, append exactly this on a new line, nothing else:
-OUTCOME:{"result":"scheduled_demo"}
-or
-OUTCOME:{"result":"callback_requested"}
-or
-OUTCOME:{"result":"not_interested"}
-or
-OUTCOME:{"result":"hung_up"}
-
-Choose whichever fits. Do not include the OUTCOME line in any message except the final one.
 """
 
 # Opening pitch — sent as the first agent message before user says anything.
 # Kept short because people hang up if the opener is too long.
-OPENING_PITCH = "Hi, this is Alex with Likva Solutions — got 30 seconds? We help teams cut hours of manual admin work every week."
+OPENING_PITCH = "Hey, this is Alex from Likva Solutions — got 20 seconds? We help businesses save hours a week by automating manual admin work."
 
 client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
 
@@ -114,6 +103,31 @@ def count_objections(history: list) -> int:
     return count
 
 
+# Confirmation words the PROSPECT must actually say before we trust a
+# "scheduled_demo" outcome. The LLM has repeatedly hallucinated the user's
+# agreement inside its own turn (proposing a time and then writing the
+# user's "yes" itself), so this is a hard, code-level check — not just a
+# prompt instruction — on the user's real last message.
+CONFIRMATION_PHRASES = [
+    "yes", "yeah", "yep", "sure", "sounds good", "works for me",
+    "that works", "okay", "ok", "let's do it", "lets do it",
+    "perfect", "great", "works great", "i'm free", "im free",
+    "i am free", "that time works", "count me in", "book it",
+    "schedule it", "see you then"
+]
+
+def user_confirmed_demo(last_user_text: str) -> bool:
+    """
+    Returns True only if the prospect's own last message contains real
+    agreement language. Used as a hard gate before honoring a
+    'scheduled_demo' outcome tag from the model.
+    """
+    if not last_user_text:
+        return False
+    text_lower = last_user_text.lower()
+    return any(phrase in text_lower for phrase in CONFIRMATION_PHRASES)
+
+
 # Phrases that indicate the prospect is trying to find a WORKING time —
 # i.e. still engaged — not rejecting the offer. Used to prevent scheduling
 # friction ("I'm busy then", "that day's booked") from being misread as
@@ -145,7 +159,7 @@ def user_rejected_offer(last_user_text: str) -> bool:
     Returns True only if the prospect's own last message contains real
     rejection language AND isn't primarily a reschedule request. Used as
     a hard gate before honoring a 'not_interested' outcome tag from the
-    model — mirrors user_confirmed_demo() below.
+    model — mirrors user_confirmed_demo() above.
     """
     if not last_user_text:
         return False
@@ -158,28 +172,3 @@ def user_rejected_offer(last_user_text: str) -> bool:
         return False
 
     return has_rejection_signal
-
-
-# Confirmation words the PROSPECT must actually say before we trust a
-# "scheduled_demo" outcome. The LLM has repeatedly hallucinated the user's
-# agreement inside its own turn (proposing a time and then writing the
-# user's "yes" itself), so this is a hard, code-level check — not just a
-# prompt instruction — on the user's real last message.
-CONFIRMATION_PHRASES = [
-    "yes", "yeah", "yep", "sure", "sounds good", "works for me",
-    "that works", "okay", "ok", "let's do it", "lets do it",
-    "perfect", "great", "works great", "i'm free", "im free",
-    "i am free", "that time works", "count me in", "book it",
-    "schedule it", "see you then"
-]
-
-def user_confirmed_demo(last_user_text: str) -> bool:
-    """
-    Returns True only if the prospect's own last message contains real
-    agreement language. Used as a hard gate before honoring a
-    'scheduled_demo' outcome tag from the model.
-    """
-    if not last_user_text:
-        return False
-    text_lower = last_user_text.lower()
-    return any(phrase in text_lower for phrase in CONFIRMATION_PHRASES)

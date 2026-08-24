@@ -20,7 +20,8 @@ from speech import text_to_speech, speech_to_text
 # "eager" about resolving open loops and will sometimes tag an OUTCOME after
 # just one exchange even when nothing conclusive happened. We only honor an
 # outcome once the prospect has actually spoken this many times — except
-# "hung_up", which can legitimately happen on turn one if they just say bye.
+# "hung_up" and a clearly-confirmed "not_interested" rejection, which can
+# legitimately happen early.
 MIN_USER_TURNS_BEFORE_END = 3
 
 @asynccontextmanager
@@ -66,6 +67,30 @@ async def get_call(call_id: str):
         return JSONResponse(status_code=404, content={"message": "Call not found"})
     call["_id"] = str(call["_id"])
     return {"success": True, "data": {"call": call}}
+
+@app.delete("/api/calls/{call_id}")
+async def delete_call(call_id: str):
+    """Delete a single call from history."""
+    from bson import ObjectId
+    db = get_db()
+    try:
+        oid = ObjectId(call_id)
+    except Exception:
+        return JSONResponse(status_code=400, content={"message": "Invalid call ID"})
+
+    result = await db.calls.delete_one({"_id": oid})
+    if result.deleted_count == 0:
+        return JSONResponse(status_code=404, content={"message": "Call not found"})
+    return {"success": True, "data": {"deletedId": call_id}}
+
+@app.delete("/api/calls")
+async def clear_calls(callerId: str):
+    """Clear all call history for a given caller (browser UUID)."""
+    if not callerId:
+        return JSONResponse(status_code=400, content={"message": "callerId required"})
+    db = get_db()
+    result = await db.calls.delete_many({"callerId": callerId})
+    return {"success": True, "data": {"deletedCount": result.deleted_count}}
 
 @app.websocket("/ws/call")
 async def websocket_call(websocket: WebSocket):
