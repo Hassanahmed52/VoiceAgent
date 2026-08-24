@@ -16,7 +16,6 @@ let audioQueue = []
 let isPlayingAudio = false
 let audioContext = null
 
-// Unlock AudioContext on first user gesture — required by browsers
 function unlockAudio() {
     if (!audioContext) {
         audioContext = new (window.AudioContext || window.webkitAudioContext)()
@@ -53,24 +52,23 @@ function addTranscript(role, text) {
     transcriptEl.scrollTop = transcriptEl.scrollHeight
 }
 
-// Play audio using AudioContext — works even without prior user gesture
-// once AudioContext is unlocked
-async function playAudioBytes(audioBytes) {
+async function playAudioBytes(arrayBuffer) {
     try {
         unlockAudio()
-        const buffer = await audioContext.decodeAudioData(audioBytes.slice(0))
+        const buffer = await audioContext.decodeAudioData(arrayBuffer)
         const source = audioContext.createBufferSource()
         source.buffer = buffer
         source.connect(audioContext.destination)
-
+        waveEl.classList.add("animate-pulse")
         return new Promise((resolve) => {
-            source.onended = resolve
+            source.onended = () => {
+                waveEl.classList.remove("animate-pulse")
+                resolve()
+            }
             source.start(0)
-            waveEl.classList.add("animate-pulse")
         })
     } catch (err) {
         console.error("audio play error:", err)
-    } finally {
         waveEl.classList.remove("animate-pulse")
     }
 }
@@ -78,32 +76,40 @@ async function playAudioBytes(audioBytes) {
 async function playAudioQueue() {
     if (isPlayingAudio || audioQueue.length === 0) return
     isPlayingAudio = true
-
     while (audioQueue.length > 0) {
-        const audioBytes = audioQueue.shift()
-        await playAudioBytes(audioBytes)
+        const buf = audioQueue.shift()
+        await playAudioBytes(buf)
     }
-
     isPlayingAudio = false
-    setStatus("Listening...", "text-green-400")
+    setStatus("Listening... hold button to speak", "text-green-400")
 }
 
-// Detect supported mime type for MediaRecorder
 function getSupportedMimeType() {
     const types = [
         "audio/webm;codecs=opus",
         "audio/webm",
         "audio/ogg;codecs=opus",
-        "audio/ogg",
         "audio/mp4",
         ""
     ]
-    for (const type of types) {
-        if (type === "" || MediaRecorder.isTypeSupported(type)) {
-            return type
-        }
+    for (const t of types) {
+        if (!t || MediaRecorder.isTypeSupported(t)) return t
     }
     return ""
+}
+
+// Use FileReader to safely convert blob to base64 — avoids btoa crash on large audio
+function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => {
+            // result is "data:audio/webm;base64,XXXXXX" — extract just the base64 part
+            const base64 = reader.result.split(",")[1]
+            resolve(base64)
+        }
+        reader.onerror = reject
+        reader.readAsDataURL(blob)
+    })
 }
 
 async function startRecording() {
@@ -111,14 +117,7 @@ async function startRecording() {
     unlockAudio()
 
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                sampleRate: 16000
-            }
-        })
-
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
         const mimeType = getSupportedMimeType()
         const options = mimeType ? { mimeType } : {}
 
@@ -126,42 +125,47 @@ async function startRecording() {
         audioChunks = []
 
         mediaRecorder.ondataavailable = (e) => {
-            if (e.data && e.data.size > 0) {
-                audioChunks.push(e.data)
-            }
+            if (e.data && e.data.size > 0) audioChunks.push(e.data)
         }
 
         mediaRecorder.onstop = async () => {
-            if (audioChunks.length === 0 || !ws || ws.readyState !== WebSocket.OPEN) return
+            stream.getTracks().forEach(t => t.stop())
 
-            const mimeUsed = mediaRecorder.mimeType || "audio/webm"
-            const blob = new Blob(audioChunks, { type: mimeUsed })
-
-            // Only send if audio is long enough (avoid empty sends)
-            if (blob.size < 1000) {
-                setStatus("Too short — try again", "text-yellow-400")
-                setTimeout(() => setStatus("Listening...", "text-green-400"), 1500)
+            if (audioChunks.length === 0) {
+                console.warn("no audio chunks")
+                setStatus("Listening... hold button to speak", "text-green-400")
                 return
             }
 
-            const buffer = await blob.arrayBuffer()
-            const bytes = new Uint8Array(buffer)
+            const mimeUsed = mediaRecorder.mimeType || "audio/webm"
+            const blob = new Blob(audioChunks, { type: mimeUsed })
+            console.log(`audio blob: ${blob.size} bytes, type: ${mimeUsed}`)
 
-            // Convert to base64
-            let binary = ""
-            for (let i = 0; i < bytes.length; i++) {
-                binary += String.fromCharCode(bytes[i])
+            if (blob.size < 500) {
+                setStatus("Too short — hold longer", "text-yellow-400")
+                setTimeout(() => setStatus("Listening... hold button to speak", "text-green-400"), 1500)
+                return
             }
-            const base64 = btoa(binary)
 
-            ws.send(JSON.stringify({ type: "audio", data: base64 }))
+            try {
+                const base64 = await blobToBase64(blob)
+                console.log(`sending base64: ${base64.length} chars`)
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: "audio", data: base64 }))
+                } else {
+                    console.error("WebSocket not open")
+                    setStatus("Disconnected", "text-red-400")
+                }
+            } catch (err) {
+                console.error("base64 conversion error:", err)
+                setStatus("Error sending audio", "text-red-400")
+            }
+
             audioChunks = []
         }
 
-        // Collect data every 250ms for smoother chunks
         mediaRecorder.start(250)
         isRecording = true
-
         talkBtn.classList.add("bg-red-600", "border-red-400")
         talkBtn.classList.remove("bg-indigo-600", "border-indigo-400")
         talkBtn.textContent = "Recording..."
@@ -175,26 +179,20 @@ async function startRecording() {
 
 function stopRecording() {
     if (!isRecording || !mediaRecorder) return
-
     mediaRecorder.stop()
-    mediaRecorder.stream.getTracks().forEach(t => t.stop())
-    mediaRecorder = null
     isRecording = false
-
     talkBtn.classList.remove("bg-red-600", "border-red-400")
     talkBtn.classList.add("bg-indigo-600", "border-indigo-400")
     talkBtn.textContent = "Hold to Talk"
     setStatus("Processing...", "text-yellow-400")
 }
 
-// Hold to talk — mouse and touch
 talkBtn.addEventListener("mousedown", (e) => { e.preventDefault(); startRecording() })
 talkBtn.addEventListener("touchstart", (e) => { e.preventDefault(); startRecording() }, { passive: false })
 talkBtn.addEventListener("mouseup", stopRecording)
 talkBtn.addEventListener("touchend", stopRecording)
 talkBtn.addEventListener("mouseleave", () => { if (isRecording) stopRecording() })
 
-// WebSocket connection
 const proto = window.location.protocol === "https:" ? "wss" : "ws"
 const WS_URL = `${proto}://${window.location.host}/ws/call`
 
@@ -203,57 +201,51 @@ function connect() {
     ws = new WebSocket(WS_URL)
 
     ws.onopen = () => {
+        console.log("WebSocket connected")
         ws.send(JSON.stringify({ type: "start", callerId }))
     }
 
     ws.onmessage = async (event) => {
         let msg
-        try {
-            msg = JSON.parse(event.data)
-        } catch {
-            return
-        }
+        try { msg = JSON.parse(event.data) } catch { return }
+
+        console.log("ws message:", msg.type, msg.status || "")
 
         if (msg.type === "status") {
             if (msg.status === "listening") setStatus("Listening... hold button to speak", "text-green-400")
             else if (msg.status === "processing") setStatus("Processing...", "text-yellow-400")
             else if (msg.status === "speaking") setStatus("Alex is speaking...", "text-indigo-400")
         }
-
         else if (msg.type === "transcript") {
             addTranscript(msg.role, msg.text)
         }
-
         else if (msg.type === "audio") {
-            // Decode base64 to ArrayBuffer
             const binary = atob(msg.data)
             const bytes = new Uint8Array(binary.length)
-            for (let i = 0; i < binary.length; i++) {
-                bytes[i] = binary.charCodeAt(i)
-            }
-            audioQueue.push(bytes.buffer)
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+            audioQueue.push(bytes.buffer.slice(0))
             playAudioQueue()
         }
-
         else if (msg.type === "call_ended") {
-            setStatus("Call ended — redirecting...", "text-gray-400")
+            setStatus("Call ended", "text-gray-400")
             talkBtn.disabled = true
             endBtn.disabled = true
             setTimeout(() => { window.location.href = "/" }, 2000)
         }
-
         else if (msg.type === "error") {
             setStatus("Error: " + msg.message, "text-red-400")
+            console.error("server error:", msg.message)
         }
     }
 
-    ws.onclose = () => {
+    ws.onclose = (e) => {
+        console.log("WebSocket closed:", e.code, e.reason)
         setStatus("Disconnected", "text-gray-500")
     }
 
     ws.onerror = (e) => {
-        setStatus("Connection failed", "text-red-400")
-        console.error("ws error:", e)
+        console.error("WebSocket error:", e)
+        setStatus("Connection error", "text-red-400")
     }
 }
 
@@ -264,7 +256,6 @@ endBtn.addEventListener("click", () => {
     setTimeout(() => { window.location.href = "/" }, 500)
 })
 
-// Unlock audio on page load via any interaction
 document.addEventListener("click", unlockAudio, { once: true })
 document.addEventListener("touchstart", unlockAudio, { once: true })
 

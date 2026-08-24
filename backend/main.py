@@ -65,6 +65,8 @@ async def websocket_call(websocket: WebSocket):
     call_object_id = None
     conversation_history = []
     caller_id = None
+    # Use naive UTC throughout to match what MongoDB returns
+    start_time = datetime.utcnow()
 
     try:
         raw = await websocket.receive_text()
@@ -78,7 +80,7 @@ async def websocket_call(websocket: WebSocket):
 
         call_doc = {
             "callerId": caller_id,
-            "startTime": datetime.now(timezone.utc),
+            "startTime": start_time,
             "status": "active",
             "transcript": [],
             "objectionCount": 0,
@@ -87,8 +89,8 @@ async def websocket_call(websocket: WebSocket):
         result = await db.calls.insert_one(call_doc)
         call_object_id = result.inserted_id
         call_id = str(call_object_id)
+        print(f"[ws] call started: {call_id}")
 
-        # Send opening pitch
         await websocket.send_text(json.dumps({"type": "status", "status": "speaking"}))
 
         audio_bytes = await asyncio.get_event_loop().run_in_executor(
@@ -102,19 +104,20 @@ async def websocket_call(websocket: WebSocket):
         }))
 
         if audio_bytes:
+            print(f"[ws] sending opening audio: {len(audio_bytes)} bytes")
             await websocket.send_text(json.dumps({
                 "type": "audio",
                 "data": base64.b64encode(audio_bytes).decode()
             }))
         else:
-            print("[ws] warning: no audio generated for opening pitch")
+            print("[ws] warning: no audio for opening pitch")
 
         await db.calls.update_one(
             {"_id": call_object_id},
             {"$push": {"transcript": {
                 "role": "agent",
                 "text": OPENING_PITCH,
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "timestamp": datetime.utcnow().isoformat()
             }}}
         )
 
@@ -126,13 +129,14 @@ async def websocket_call(websocket: WebSocket):
             msg = json.loads(raw)
 
             if msg.get("type") == "end":
+                print("[ws] user ended call")
                 break
 
             if msg.get("type") == "audio":
                 await websocket.send_text(json.dumps({"type": "status", "status": "processing"}))
 
                 audio_data = base64.b64decode(msg["data"])
-                print(f"[ws] received audio chunk: {len(audio_data)} bytes")
+                print(f"[ws] received audio: {len(audio_data)} bytes")
 
                 if len(audio_data) < 500:
                     print("[ws] audio too small, skipping")
@@ -143,27 +147,23 @@ async def websocket_call(websocket: WebSocket):
                 print(f"[ws] STT result: '{user_text}'")
 
                 if not user_text or not user_text.strip():
-                    print("[ws] empty transcription, asking to repeat")
+                    retry_msg = "Sorry, I didn't catch that. Could you try again?"
                     await websocket.send_text(json.dumps({
-                        "type": "transcript",
-                        "role": "agent",
-                        "text": "Sorry, I didn't catch that. Could you say that again?"
+                        "type": "transcript", "role": "agent", "text": retry_msg
                     }))
-                    repeat_audio = await asyncio.get_event_loop().run_in_executor(
-                        None, text_to_speech, "Sorry, I didn't catch that. Could you say that again?"
+                    retry_audio = await asyncio.get_event_loop().run_in_executor(
+                        None, text_to_speech, retry_msg
                     )
-                    if repeat_audio:
+                    if retry_audio:
                         await websocket.send_text(json.dumps({
                             "type": "audio",
-                            "data": base64.b64encode(repeat_audio).decode()
+                            "data": base64.b64encode(retry_audio).decode()
                         }))
                     await websocket.send_text(json.dumps({"type": "status", "status": "listening"}))
                     continue
 
                 await websocket.send_text(json.dumps({
-                    "type": "transcript",
-                    "role": "user",
-                    "text": user_text
+                    "type": "transcript", "role": "user", "text": user_text
                 }))
 
                 await db.calls.update_one(
@@ -171,7 +171,7 @@ async def websocket_call(websocket: WebSocket):
                     {"$push": {"transcript": {
                         "role": "user",
                         "text": user_text,
-                        "timestamp": datetime.now(timezone.utc).isoformat()
+                        "timestamp": datetime.utcnow().isoformat()
                     }}}
                 )
 
@@ -180,13 +180,10 @@ async def websocket_call(websocket: WebSocket):
                 await websocket.send_text(json.dumps({"type": "status", "status": "speaking"}))
                 agent_text_raw = await get_agent_response(conversation_history)
                 agent_text, outcome = extract_outcome(agent_text_raw)
-
-                print(f"[ws] agent response: '{agent_text}', outcome: {outcome}")
+                print(f"[ws] agent: '{agent_text}' outcome: {outcome}")
 
                 await websocket.send_text(json.dumps({
-                    "type": "transcript",
-                    "role": "agent",
-                    "text": agent_text
+                    "type": "transcript", "role": "agent", "text": agent_text
                 }))
 
                 audio_bytes = await asyncio.get_event_loop().run_in_executor(
@@ -203,7 +200,7 @@ async def websocket_call(websocket: WebSocket):
                     {"$push": {"transcript": {
                         "role": "agent",
                         "text": agent_text,
-                        "timestamp": datetime.now(timezone.utc).isoformat()
+                        "timestamp": datetime.utcnow().isoformat()
                     }}}
                 )
 
@@ -225,7 +222,7 @@ async def websocket_call(websocket: WebSocket):
                 await websocket.send_text(json.dumps({"type": "status", "status": "listening"}))
 
     except WebSocketDisconnect:
-        print(f"[ws] client disconnected, callId: {call_id}")
+        print(f"[ws] client disconnected: {call_id}")
     except Exception as e:
         print(f"[ws] error: {e}")
         import traceback
@@ -235,27 +232,25 @@ async def websocket_call(websocket: WebSocket):
         except Exception:
             pass
     finally:
-        # Fix: compare with None, not bool check
         if call_id is not None and db is not None:
             from bson import ObjectId
-            end_time = datetime.now(timezone.utc)
+            end_time = datetime.utcnow()
             try:
-                call_doc = await db.calls.find_one({"_id": ObjectId(call_id)})
-                if call_doc is not None:
-                    start = call_doc.get("startTime")
-                    duration = int((end_time - start).total_seconds()) if start else 0
-                    objection_count = count_objections(conversation_history)
-                    await db.calls.update_one(
-                        {"_id": ObjectId(call_id)},
-                        {"$set": {
-                            "status": "completed",
-                            "endTime": end_time,
-                            "durationSeconds": duration,
-                            "objectionCount": objection_count
-                        }}
-                    )
-                    print(f"[ws] call completed, duration: {duration}s")
+                duration = int((end_time - start_time).total_seconds())
+                objection_count = count_objections(conversation_history)
+                await db.calls.update_one(
+                    {"_id": ObjectId(call_id)},
+                    {"$set": {
+                        "status": "completed",
+                        "endTime": end_time,
+                        "durationSeconds": duration,
+                        "objectionCount": objection_count
+                    }}
+                )
+                print(f"[ws] call saved: {duration}s, objections: {objection_count}")
             except Exception as e:
-                print(f"[ws] error saving call completion: {e}")
+                print(f"[ws] error saving call: {e}")
+                import traceback
+                traceback.print_exc()
 
 app.mount("/", StaticFiles(directory="/frontend", html=True), name="frontend")
